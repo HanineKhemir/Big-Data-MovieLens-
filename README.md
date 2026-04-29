@@ -1,20 +1,24 @@
 # Big-Data-MovieLens-
 
-A Hadoop MapReduce application written in Java that processes the [MovieLens 1M Dataset](https://grouplens.org/datasets/movielens/1m/) to calculate the average rating and the total number of ratings for each individual movie.
+A Java big-data project that processes the [MovieLens 1M Dataset](https://grouplens.org/datasets/movielens/1m/) using Hadoop MapReduce, Spark batch analytics, and Spark Streaming + Kafka.
 
 ## Project Structure
 
-This project uses Apache Hadoop and Maven.
+This project uses Apache Hadoop, Spark, Kafka, and Maven.
 
 - **`RatingMapper`**: Reads raw `ratings.dat` data and emits `(Movie ID, Rating)`.
 - **`RatingReducer`**: Aggregates all ratings for each Movie ID, calculating the average rating and the total count.
 - **`MovieRatingAverage`**: The MapReduce driver class that configures and launches the Hadoop job.
+- **`MovieLensAnalysis`**: Spark batch analysis (top 10 movies, genre stats, ratings distribution, full movie stats).
+- **`RatingProducer`**: Kafka producer that streams `ratings.dat` to the `movie-rating` topic.
+- **`RatingStreamProcessor`**: Spark Structured Streaming job that reads Kafka and computes live averages per movie.
 
 ## Prerequisites
 
 - Java 8
 - Apache Maven
-- A running Hadoop Cluster (or a Dockerized Hadoop container like `hadoop-master`)
+- A running Hadoop + Spark cluster (or a Dockerized Hadoop container like `hadoop-master`)
+- Kafka broker running (for streaming)
 
 ## Data Format
 
@@ -23,10 +27,16 @@ This project uses Apache Hadoop and Maven.
 userId::movieId::rating::timestamp
 ```
 
-**Output format:**
+**MapReduce output format:**
 ```
 movieId    average_rating    number_of_ratings
 ```
+
+**Spark batch outputs (CSV):**
+- `movie-stats` (all movies)
+- `top10` (top 10 movies, min 100 votes)
+- `genre-stats` (avg rating by genre)
+- `rating-distribution` (counts by rating)
 
 ## How to Build
 
@@ -39,7 +49,7 @@ mvn clean package
 The compiled JAR will be created in the `target/` directory:
 `target/movielens-mapreduce-1.0-SNAPSHOT-jar-with-dependencies.jar`
 
-## How to Run
+## How to Run (MapReduce)
 
 1. **Upload the Input Data to HDFS:**
    ```bash
@@ -58,3 +68,61 @@ The compiled JAR will be created in the `target/` directory:
    ```bash
    hdfs dfs -cat /movielens/output-mr/part-r-00000
    ```
+
+## How to Run (Spark Batch)
+
+1. **Upload input files to HDFS:**
+   ```bash
+   hdfs dfs -mkdir -p /movielens
+   hdfs dfs -put ratings.dat /movielens/
+   hdfs dfs -put movies.dat /movielens/
+   ```
+
+2. **Run Spark batch analysis:**
+   ```bash
+   spark-submit \
+     --class movielens.spark.MovieLensAnalysis \
+     --master local[*] \
+     target/movielens-mapreduce-1.0-SNAPSHOT-jar-with-dependencies.jar \
+     /movielens/ratings.dat \
+     /movielens/movies.dat \
+     /movielens/output-spark
+   ```
+
+3. **View results (CSV files use random part names):**
+   ```bash
+   hdfs dfs -cat /movielens/output-spark/top10/*.csv
+   hdfs dfs -cat /movielens/output-spark/genre-stats/*.csv
+   hdfs dfs -cat /movielens/output-spark/rating-distribution/*.csv
+   hdfs dfs -cat /movielens/output-spark/movie-stats/*.csv
+   ```
+
+## How to Run (Kafka + Spark Streaming)
+
+1. **Create the Kafka topic:**
+   ```bash
+   kafka-topics.sh --create \
+     --topic movie-rating \
+     --replication-factor 1 \
+     --partitions 1 \
+     --bootstrap-server localhost:9092
+   ```
+
+2. **Start the Spark streaming job:**
+   ```bash
+   spark-submit \
+     --class movielens.kafka.RatingStreamProcessor \
+     --master local[2] \
+     --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0 \
+     target/movielens-mapreduce-1.0-SNAPSHOT-jar-with-dependencies.jar \
+     /movielens/output-streaming
+   ```
+
+3. **Start the Kafka producer:**
+   ```bash
+   java -cp target/movielens-mapreduce-1.0-SNAPSHOT-jar-with-dependencies.jar \
+     movielens.kafka.RatingProducer /movielens/ratings.dat
+   ```
+
+4. **Streaming output:**
+   The console will display live `movieId`, `avgRating`, and `totalVotes` updates.
