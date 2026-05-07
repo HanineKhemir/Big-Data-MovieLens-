@@ -109,33 +109,63 @@
     </div>
   </div>
 
-  <!-- Row 3: Live stream table -->
-  <div class="card">
-    <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
-      <h2 class="text-lg font-semibold text-emerald-400 flex items-center gap-2">
-        <span class="pulse"></span>
-        Live Streaming Feed
-      </h2>
-      <span class="text-xs text-slate-500" id="stream-ts">Auto-refresh every 5s</span>
+  <!-- Row 3: Live stream -->
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+    <!-- Per-film live averages chart -->
+    <div class="card col-span-1">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold text-emerald-400 flex items-center gap-2">
+          <span class="pulse"></span> Live Avg per Film
+        </h2>
+        <span class="text-xs text-slate-500" id="stream-ts">every 5s</span>
+      </div>
+      <canvas id="stream-film-chart"></canvas>
     </div>
-    <div class="overflow-x-auto">
-      <table class="w-full text-sm">
-        <thead>
-          <tr class="text-slate-500 border-b border-slate-700 text-xs uppercase tracking-wide">
-            <th class="pb-2 text-left">User</th>
-            <th class="pb-2 text-left">Movie / ID</th>
-            <th class="pb-2 text-right">Rating</th>
-            <th class="pb-2 text-right">Source</th>
-          </tr>
-        </thead>
-        <tbody id="stream-table">
-          <tr><td colspan="4" class="text-center py-6 text-slate-500">Waiting for stream data…</td></tr>
-        </tbody>
-      </table>
+
+    <!-- Recent ratings feed -->
+    <div class="card col-span-1 lg:col-span-2">
+      <h2 class="text-lg font-semibold text-emerald-400 mb-4 flex items-center gap-2">
+        <span class="pulse"></span> Recent Ratings
+        <span id="stream-count" class="text-xs text-slate-500 font-normal ml-2"></span>
+      </h2>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-slate-500 border-b border-slate-700 text-xs uppercase tracking-wide">
+              <th class="pb-2 text-left">User</th>
+              <th class="pb-2 text-left">Film</th>
+              <th class="pb-2 text-center">Stars</th>
+              <th class="pb-2 text-right">Rating</th>
+              <th class="pb-2 text-right">Source</th>
+            </tr>
+          </thead>
+          <tbody id="stream-table">
+            <tr><td colspan="5" class="text-center py-6 text-slate-500">Waiting for stream data…</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
 
 <script>
+let MOVIE_MAP = {};
+
+async function loadMovieMap() {
+  try {
+    const r = await fetch('/api/movie-map');
+    MOVIE_MAP = await r.json();
+  } catch(e) {}
+}
+
+function movieName(id) {
+  if (!id) return '—';
+  // Letterboxd slugs are already readable (e.g. "inception") — capitalise them
+  if (isNaN(id)) return id.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  // MovieLens numeric IDs — look up title
+  return MOVIE_MAP[id] || `#${id}`;
+}
+
 const COLORS = [
   '#6366f1','#10b981','#f59e0b','#f43f5e','#8b5cf6',
   '#0ea5e9','#ec4899','#14b8a6','#a3e635','#fb923c',
@@ -189,7 +219,6 @@ async function loadTop10() {
     const r = await fetch('/api/top10');
     const rows = await r.json();
     if (!rows.length) { tb.innerHTML = '<tr><td colspan="4" class="text-center py-6 text-slate-500">No data yet — run Spark batch first.</td></tr>'; return; }
-    document.getElementById('stat-movies').textContent = rows.length;
     tb.innerHTML = rows.map((row, i) => `
       <tr class="border-b border-slate-800 transition-colors">
         <td class="text-slate-500 text-xs">${i+1}</td>
@@ -258,14 +287,22 @@ async function loadDistChart() {
   } catch(e) {}
 }
 
+// ─── Total ratings from distribution ─────────────────────
+async function loadTotalRatings() {
+  try {
+    const r = await fetch('/api/rating-distribution');
+    const rows = await r.json();
+    const total = rows.reduce((s, r) => s + parseInt(r.count || 0), 0);
+    document.getElementById('stat-ratings').textContent = total.toLocaleString();
+  } catch(e) {}
+}
+
 // ─── MapReduce bar chart ──────────────────────────────────
 let mrChart;
 async function loadMRChart() {
   try {
     const r = await fetch('/api/mapreduce');
     const rows = await r.json();
-    document.getElementById('stat-ratings').textContent =
-      rows.reduce((s, r) => s + r.count, 0).toLocaleString();
     if (!rows.length) return;
     const labels = rows.map(r => `#${r.movieId}`);
     const data   = rows.map(r => r.avgRating);
@@ -288,7 +325,27 @@ async function loadMRChart() {
   } catch(e) {}
 }
 
-// ─── Live stream table ────────────────────────────────────
+// ─── Live stream ──────────────────────────────────────────
+const FILM_COLORS = {};
+let filmColorIdx = 0;
+let streamFilmChart;
+
+function filmColor(name) {
+  if (!FILM_COLORS[name]) FILM_COLORS[name] = COLORS[filmColorIdx++ % COLORS.length];
+  return FILM_COLORS[name];
+}
+
+function starsHtml(rating) {
+  const v = parseFloat(rating);
+  let s = '';
+  for (let i = 1; i <= 5; i++) {
+    if (v >= i) s += '<span style="color:#f59e0b">★</span>';
+    else if (v >= i - 0.5) s += '<span style="color:#f59e0b">½</span>';
+    else s += '<span style="color:#334155">★</span>';
+  }
+  return s;
+}
+
 async function loadStream() {
   const tb = document.getElementById('stream-table');
   try {
@@ -296,36 +353,97 @@ async function loadStream() {
     const rows = await r.json();
     document.getElementById('stat-stream').textContent = rows.length;
     document.getElementById('stream-ts').textContent = 'Updated ' + new Date().toLocaleTimeString();
+
     if (!rows.length) {
-      tb.innerHTML = '<tr><td colspan="4" class="text-center py-6 text-slate-500">No stream data yet — start the Kafka producers.</td></tr>';
+      tb.innerHTML = '<tr><td colspan="5" class="text-center py-6 text-slate-500">No stream data yet — start the Kafka producers.</td></tr>';
       return;
     }
-    const recent = [...rows].reverse().slice(0, 50);
-    tb.innerHTML = recent.map(row => {
+
+    // Build per-film averages for the chart
+    const filmMap = {};
+    rows.forEach(row => {
+      const film = row.movieId || 'unknown';
       const rating = parseFloat(row.rating);
-      const color  = rating >= 4 ? 'text-emerald-400' : rating >= 3 ? 'text-amber-400' : 'text-rose-400';
-      return `<tr class="border-b border-slate-800 transition-colors">
-        <td class="text-slate-300">${row.userId || '—'}</td>
-        <td class="text-slate-200 font-medium">${row.movieId || '—'}</td>
-        <td class="text-right font-bold ${color}">${isNaN(rating) ? '—' : rating.toFixed(1)}</td>
-        <td class="text-right">${sourceBadge(row.source)}</td>
+      if (isNaN(rating)) return;
+      if (!filmMap[film]) filmMap[film] = { sum: 0, count: 0 };
+      filmMap[film].sum += rating;
+      filmMap[film].count++;
+    });
+    const filmLabels    = Object.keys(filmMap).sort();
+    const filmAvgs      = filmLabels.map(f => (filmMap[f].sum / filmMap[f].count).toFixed(2));
+    const filmBgColors  = filmLabels.map(f => filmColor(f));
+    const filmNames     = filmLabels.map(f => movieName(f));
+
+    const ctx = document.getElementById('stream-film-chart').getContext('2d');
+    if (streamFilmChart) streamFilmChart.destroy();
+    streamFilmChart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: filmNames,
+        datasets: [{
+          label: 'Avg Rating',
+          data: filmAvgs,
+          backgroundColor: filmBgColors,
+          borderRadius: 6
+        }]
+      },
+      options: {
+        indexAxis: 'y',
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { min: 0, max: 5, ticks: { color: '#94a3b8' }, grid: { color: '#334155' } },
+          y: { ticks: { color: '#94a3b8', font: { size: 11 } }, grid: { display: false } }
+        }
+      }
+    });
+
+    // Recent ratings table — show last 30, most recent first
+    document.getElementById('stream-count').textContent = `(${rows.length} total)`;
+    const recent = [...rows].reverse().slice(0, 30);
+    tb.innerHTML = recent.map(row => {
+      const film   = row.movieId || '—';
+      const rating = parseFloat(row.rating);
+      const color  = rating >= 4 ? '#10b981' : rating >= 3 ? '#f59e0b' : '#f43f5e';
+      const fc     = filmColor(film);
+      return `<tr class="border-b border-slate-800">
+        <td class="text-slate-400 text-xs py-2">${row.userId || '—'}</td>
+        <td class="py-2">
+          <span style="background:${fc}22;color:${fc};border:1px solid ${fc}55"
+            class="px-2 py-0.5 rounded-full text-xs font-semibold">${movieName(film)}</span>
+        </td>
+        <td class="text-center py-2 text-sm">${starsHtml(rating)}</td>
+        <td class="text-right py-2 font-bold text-sm" style="color:${color}">${isNaN(rating) ? '—' : rating.toFixed(1)}</td>
+        <td class="text-right py-2">${sourceBadge(row.source)}</td>
       </tr>`;
     }).join('');
   } catch(e) {
-    tb.innerHTML = '<tr><td colspan="4" class="text-center py-6 text-rose-400">Could not reach HDFS</td></tr>';
+    tb.innerHTML = '<tr><td colspan="5" class="text-center py-6 text-rose-400">Could not reach HDFS</td></tr>';
   }
 }
 
+// ─── Total movies count ───────────────────────────────────
+async function loadTotalMovies() {
+  try {
+    const r = await fetch('/api/movie-stats-count');
+    const d = await r.json();
+    document.getElementById('stat-movies').textContent = d.count.toLocaleString();
+  } catch(e) {}
+}
+
 // ─── Boot ─────────────────────────────────────────────────
+loadMovieMap().then(() => {
+  loadStream();
+  setInterval(() => { loadStream(); loadStatus(); }, 5000);
+});
 loadStatus();
+loadTotalMovies();
+loadTotalRatings();
 loadTop10();
 loadGenreChart();
 loadDistChart();
 loadMRChart();
 loadStream();
 
-// Refresh stream + status every 5 seconds
-setInterval(() => { loadStream(); loadStatus(); }, 5000);
 </script>
 </body>
 </html>

@@ -102,10 +102,7 @@ public class MovieLensAnalysis {
         System.out.println("\n========== DISTRIBUTION DES NOTES ==========");
         ratingDist.show(false);
 
-        // 8. Sauvegarder dans HBase
-        writeMovieStatsToHBase(moviesWithStats);
-
-        // 9. Sauvegarder dans HDFS
+        // 8. Sauvegarder dans HDFS
         moviesWithStats
                 .orderBy(col("avgRating").desc())
                 .coalesce(1)

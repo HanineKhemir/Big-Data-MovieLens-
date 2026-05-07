@@ -2,6 +2,8 @@ from flask import Flask, jsonify, render_template
 import subprocess
 import io
 import csv
+import random
+from collections import defaultdict
 
 app = Flask(__name__)
 CONTAINER = "hadoop-master"
@@ -68,6 +70,20 @@ def mapreduce():
     return jsonify(results[:20])
 
 
+@app.route("/api/movie-map")
+def movie_map():
+    content = hdfs_cat("/movielens/output-spark/movie-stats/*.csv")
+    rows = parse_csv(content)
+    return jsonify({r["movieId"]: r["title"] for r in rows if "movieId" in r and "title" in r})
+
+
+@app.route("/api/movie-stats-count")
+def movie_stats_count():
+    content = hdfs_cat("/movielens/output-spark/movie-stats/*.csv")
+    rows = parse_csv(content)
+    return jsonify({"count": len(rows)})
+
+
 @app.route("/api/top10")
 def top10():
     content = hdfs_cat("/movielens/output-spark/top10/*.csv")
@@ -94,7 +110,20 @@ def rating_distribution():
 def streaming():
     content = hdfs_cat("/movielens/output-streaming/raw-stream/*.csv")
     rows = parse_csv(content)
-    return jsonify(rows[-100:] if len(rows) > 100 else rows)
+    if not rows:
+        return jsonify([])
+
+    # Group by film and take last 15 entries per film so all films appear
+    by_film = defaultdict(list)
+    for row in rows:
+        by_film[row.get("movieId", "unknown")].append(row)
+
+    mixed = []
+    for film_rows in by_film.values():
+        mixed.extend(film_rows[-15:])
+
+    random.shuffle(mixed)
+    return jsonify(mixed[:120])
 
 
 if __name__ == "__main__":
