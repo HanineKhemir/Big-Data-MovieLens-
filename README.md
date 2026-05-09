@@ -25,36 +25,41 @@ This project uses Apache Hadoop, Spark, Kafka, and Maven.
 
 ### High-level flow
 
-1. **Batch layer**
-  - MovieLens files (`ratings.dat`, `movies.dat`) are processed by MapReduce and Spark batch jobs.
-  - Outputs are stored in HDFS (CSV/text).
+1. **Batch processing (Hadoop + Spark)**
+   - **MapReduce**: `RatingMapper` → `RatingReducer` → `MovieRatingAverage` (averages + counts).
+   - **Spark batch**: `movielens.spark.MovieLensAnalysis` (top10, genres, distributions, full stats).
+   - **Storage**: results written to **HDFS** (CSV/text outputs).
 
-2. **Streaming layer**
-  - `movielens.mock.RatingProducer` reads `ratings.dat` and publishes to **`movielens-ratings`**.
-  - `movielens.streamingkafka.LetterboxdProducer` scrapes live ratings and publishes to **`letterboxd-ratings`**.
-  - `movielens.streamingkafka.RatingStreamProcessor` consumes both topics, normalizes data, and aggregates ratings.
+2. **Streaming processing (Kafka + Spark Structured Streaming)**
+   - **Producer (MovieLens replay)**: `movielens.mock.RatingProducer` publishes `ratings.dat` to **`movielens-ratings`**.
+   - **Producer (Letterboxd live)**: `movielens.streamingkafka.LetterboxdProducer` publishes to **`letterboxd-ratings`**.
+   - **Streaming consumer**: `movielens.streamingkafka.RatingStreamProcessor` consumes both topics, normalizes, aggregates.
+   - **Outputs**: console metrics, raw stream archived to **HDFS**, aggregates stored in **HBase**.
 
 3. **Storage layer**
-  - **HDFS**: raw streaming archive + batch outputs.
-  - **HBase**: aggregated live stats in `movie_stats` (row key: `movieId_source`).
+   - **HDFS**: batch outputs + streaming raw archive.
+   - **HBase**: live aggregates in `movie_stats` (row key: `movieId_source`).
 
 ### Data flow diagram
 
 ```
-MovieLens batch data           Letterboxd live data
-      ↓                              ↓
-RatingProducer              LetterboxdProducer
-      ↓                              ↓
-  movielens-ratings        letterboxd-ratings
-      ↓                              ↓
-   ───────────────────────────────────
-             ↓
-      RatingStreamProcessor
-         (Spark Streaming)
-             ↓
-      ┌──────────┬──────────┬──────────┐
-      ↓          ↓          ↓          ↓
-    Console    HDFS       HBase    Source Stats
+Batch (offline)                                    Streaming (online)
+MovieLens files                                    Letterboxd site
+ratings.dat + movies.dat                           (scrape ratings)
+      │                                                  │
+      │ MapReduce (MovieRatingAverage)                  │ LetterboxdProducer
+      │ Spark batch (MovieLensAnalysis)                 │
+      ▼                                                  ▼
+    HDFS (batch outputs)                         Kafka: letterboxd-ratings
+      ▲                                                  │
+      │                                          Kafka: movielens-ratings
+      │                                                  │
+RatingProducer (replay ratings.dat)                      │
+      └──────────────────────────────┬───────────────────┘
+                                     ▼
+                        RatingStreamProcessor (Spark)
+                                     ▼
+                     Console + HDFS (raw) + HBase (stats)
 ```
 
 ## Data Format
@@ -203,19 +208,4 @@ The Spark streaming console will display:
 
 ### Architecture
 
-```
-MovieLens batch data           Letterboxd live data
-         ↓                              ↓
-RatingProducer              LetterboxdProducer
-         ↓                              ↓
-   movielens-ratings        letterboxd-ratings
-         ↓                              ↓
-    ───────────────────────────────────
-                   ↓
-        RatingStreamProcessor
-             (Spark Streaming)
-                   ↓
-        ┌──────────┬──────────┬──────────┐
-        ↓          ↓          ↓          ↓
-     Console    HDFS       HBase    Source Stats
-```
+See the **Architecture** section above for the full batch + streaming flow and diagram.
