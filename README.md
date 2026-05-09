@@ -1,4 +1,4 @@
-# Big-Data-MovieLens-
+# FilmDataForge
 
 A Java big-data project that processes the [MovieLens 1M Dataset](https://grouplens.org/datasets/movielens/1m/) using Hadoop MapReduce, Spark batch analytics, and Spark Streaming + Kafka.
 
