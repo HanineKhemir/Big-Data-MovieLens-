@@ -10,7 +10,7 @@ This project uses Apache Hadoop, Spark, Kafka, and Maven.
 - **`RatingReducer`**: Aggregates all ratings for each Movie ID, calculating the average rating and the total count.
 - **`MovieRatingAverage`**: The MapReduce driver class that configures and launches the Hadoop job.
 - **`MovieLensAnalysis`**: Spark batch analysis (top 10 movies, genre stats, ratings distribution, full movie stats).
-- **`RatingProducer`**: Kafka producer that streams `ratings.dat` to the `movie-rating` topic (mock/offline data).
+- **`RatingProducer`**: Kafka producer that streams `ratings.dat` to the `movielens-ratings` topic (mock/offline data).
 - **`LetterboxdProducer`**: Real-time scraping producer (Letterboxd) that sends ratings to Kafka.
 - **`RatingStreamProcessor`**: Spark Structured Streaming job that reads Kafka and computes live averages per movie.
 
@@ -20,6 +20,42 @@ This project uses Apache Hadoop, Spark, Kafka, and Maven.
 - Apache Maven
 - A running Hadoop + Spark cluster (or a Dockerized Hadoop container like `hadoop-master`)
 - Kafka broker running (for streaming)
+
+## Architecture
+
+### High-level flow
+
+1. **Batch layer**
+  - MovieLens files (`ratings.dat`, `movies.dat`) are processed by MapReduce and Spark batch jobs.
+  - Outputs are stored in HDFS (CSV/text).
+
+2. **Streaming layer**
+  - `movielens.mock.RatingProducer` reads `ratings.dat` and publishes to **`movielens-ratings`**.
+  - `movielens.streamingkafka.LetterboxdProducer` scrapes live ratings and publishes to **`letterboxd-ratings`**.
+  - `movielens.streamingkafka.RatingStreamProcessor` consumes both topics, normalizes data, and aggregates ratings.
+
+3. **Storage layer**
+  - **HDFS**: raw streaming archive + batch outputs.
+  - **HBase**: aggregated live stats in `movie_stats` (row key: `movieId_source`).
+
+### Data flow diagram
+
+```
+MovieLens batch data           Letterboxd live data
+      ↓                              ↓
+RatingProducer              LetterboxdProducer
+      ↓                              ↓
+  movielens-ratings        letterboxd-ratings
+      ↓                              ↓
+   ───────────────────────────────────
+             ↓
+      RatingStreamProcessor
+         (Spark Streaming)
+             ↓
+      ┌──────────┬──────────┬──────────┐
+      ↓          ↓          ↓          ↓
+    Console    HDFS       HBase    Source Stats
+```
 
 ## Data Format
 
